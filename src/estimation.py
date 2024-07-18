@@ -19,7 +19,7 @@ def filter_frequent_words(word_counts, min_occurrences):
     """
     Filters words based on minimum occurrence threshold.
 
-    Parameters:
+    Parameters: 
     word_counts (dict): Dictionary of word counts.
     min_occurrences (int): Minimum number of occurrences for a word to be included.
 
@@ -149,6 +149,101 @@ def estimate_text_distribution(human_source_path, ai_source_path,save_file_path=
     # Count the occurrences of each unique word in both datasets.
     human_word_counts = count_human_binary_word_occurrences(human_data)
     ai_word_counts = count_ai_binary_word_occurrences(ai_data)
+    
+    # Calculate the total number of sentences in each dataset.
+    total_human_sentences = len(human_data)
+    total_ai_sentences = len(ai_data)
+    
+    # Estimate log probabilities of word occurrences in both datasets.
+    human_log_probs = estimate_log_probabilities(human_word_counts, total_human_sentences)
+    ai_log_probs = estimate_log_probabilities(ai_word_counts, total_ai_sentences)
+    
+    # Identify common vocabulary and frequent words in both datasets, along with words
+    # common across both that meet a minimum frequency criterion.
+    common_vocab = get_vocabulary_intersection(human_word_counts, ai_word_counts)
+    frequent_human_words = filter_frequent_words(human_word_counts, 5)
+    frequent_ai_words = filter_frequent_words(ai_word_counts, 3)
+    frequent_common_vocab = common_vocab.intersection(frequent_human_words.keys(), frequent_ai_words.keys())
+
+    # Calculate log(p), log(1-p), log(q) and log(1-q) for each word in the common vocabulary
+    # and save the results to a Parquet file.
+    # p denotes the probability of a word appearing in a human-generated sentence, while q denotes
+    # the probability of a word appearing in an AI-generated sentence.
+    log_likelihood_df = calculate_log_probability(human_log_probs, ai_log_probs, frequent_common_vocab)
+    log_likelihood_df.to_parquet(save_file_path,index=False)
+
+def count_human_binary_token_occurrences(human_data):
+    """
+    Counts the occurrences of unique words across sentences in the human data.
+
+    Parameters:
+    human_data (data frame): A data frame containing a list of sentences under the 'human_sentence' column.
+    
+    Returns:
+    dict: A dictionary with words as keys and the number of sentences each word appears in as values.
+    """
+    word_counts = Counter(word for sent in human_data['real_image_token'] for word in set(sent))
+    return dict(word_counts)
+
+def count_ai_binary_token_occurrences(ai_data):
+    """
+    Counts the occurrences of unique words across sentences in the ai data.
+
+    Parameters:
+    ai_data (data frame): A data frame containing a list of sentences under the 'ai_sentence' column.
+    
+    Returns:
+    dict: A dictionary with words as keys and the number of sentences each word appears in as values.
+    """
+    word_counts = Counter(word for sent in ai_data['ai_image_token'] for word in set(sent))
+    return dict(word_counts)
+
+def estimate_image_token_distribution(human_source_path, ai_source_path,save_file_path="Word.parquet", valueDivisor = 5, indexDivisor = 64):
+    """
+    Estimates image token distribution of human and AI content by calculating log probabilities of word occurrences
+    in both human and AI data and saves the results to a Parquet file.
+
+    Parameters:
+    human_source_path (str): Path to a Parquet file containing human-generated text data.
+    ai_source_path (str): Path to a Parquet file containing AI-generated text data.
+    save_file_path (str): The file path where the output Parquet file will be saved.
+    valueDivisor (int) : The divisor that used in token data to bucket data
+    indexDivisor (int) : The divisor that used in token data to bucket data
+
+    """
+    # Load the datasets from the provided Parquet files.
+    human_data=pd.read_parquet(human_source_path)
+    ai_data=pd.read_parquet(ai_source_path)
+     # Verify that the expected columns are present in each dataset.
+    if 'real_image_token' not in human_data.columns:
+        raise ValueError("human_sentence column not found in human data")
+    if 'ai_image_token' not in ai_data.columns:
+        raise ValueError("ai_sentence column not found in ai data")
+
+    # Filter out records where the sentences are too short (length <= 1) and drop any rows
+    # where the sentence is missing (NaN values).
+    human_data=human_data[human_data['real_image_token'].apply(len) > 1]
+    ai_data=ai_data[ai_data['ai_image_token'].apply(len) > 1]
+    human_data.dropna(subset=['real_image_token'], inplace=True)
+    ai_data.dropna(subset=['ai_image_token'], inplace=True)
+    if indexDivisor == 0:
+        ai_data['ai_image_token'] = ai_data['ai_image_token'].apply(
+            lambda row: [value for index, value in enumerate(row)]
+        )
+        human_data['real_image_token'] = human_data['real_image_token'].apply(
+            lambda row: [value for index, value in enumerate(row)]
+        )
+    else:
+        ai_data['ai_image_token'] = ai_data['ai_image_token'].apply(
+        lambda row: [value//valueDivisor + np.cos(index//indexDivisor) for index, value in enumerate(row)]
+        )
+        human_data['real_image_token'] = human_data['real_image_token'].apply(
+            lambda row: [value//valueDivisor + np.cos(index//indexDivisor) for index, value in enumerate(row)]
+        )
+    
+    # Count the occurrences of each unique word in both datasets.
+    human_word_counts = count_human_binary_token_occurrences(human_data)
+    ai_word_counts = count_ai_binary_token_occurrences(ai_data)
     
     # Calculate the total number of sentences in each dataset.
     total_human_sentences = len(human_data)
